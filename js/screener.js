@@ -9,7 +9,7 @@ async function scan() { $("scanBtn").disabled = true; rows = []; selectedSymbol 
     const [ex, tickers] = await Promise.all([fetchJSON(`${SPOT}/api/v3/exchangeInfo?permissions=SPOT&symbolStatus=TRADING`), fetchJSON(`${SPOT}/api/v3/ticker/24hr`)]);
     const symbolMap = new Map(ex.symbols.map(s => [s.symbol, s]));
     let candidates = tickers.map(t => { const meta = symbolMap.get(t.symbol); if (!meta)
-        return null; const high = n(t.highPrice), low = n(t.lowPrice); return { symbol: t.symbol, base: meta.baseAsset, quote: meta.quoteAsset, lastPrice: n(t.lastPrice), change24: n(t.priceChangePercent), high24: high, low24: low, amp24: low > 0 ? (high - low) / low * 100 : 0, quoteVolume: n(t.quoteVolume) }; }).filter(x => x && x.quote === "USDT" && !isExcludedBase(x.base) && x.quoteVolume >= minVol && x.amp24 >= minAmp).sort((a, b) => b.quoteVolume - a.quoteVolume).slice(0, topN);
+        return null; const high = n(t.highPrice), low = n(t.lowPrice); return { symbol: t.symbol, base: meta.baseAsset, quote: meta.quoteAsset, lastPrice: n(t.lastPrice), change24: n(t.priceChangePercent), high24: high, low24: low, amp24: low > 0 ? (high - low) / low * 100 : 0, quoteVolume: n(t.quoteVolume) }; }).filter(x => x && x.quote === "USDT" && !isExcludedBase(x.base) && !extraStableBases.has(x.base) && x.quoteVolume >= minVol && x.amp24 >= minAmp).sort((a, b) => b.quoteVolume - a.quoteVolume).slice(0, topN);
     $("sumCandidates").textContent = candidates.length;
     setStatus(`2/4 初篩 ${candidates.length} 檔，抓取 ${interval} K 線...`);
     const tech = await pool(candidates, 6, async (c, i) => { const k = await fetchJSON(`${SPOT}/api/v3/klines?symbol=${c.symbol}&interval=${interval}&limit=80`); if (i % 8 === 0)
