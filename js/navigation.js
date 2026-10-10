@@ -1,5 +1,6 @@
-/** v5 — 獨立幣種頁：History API 導航、返回及保留捲動位置。 */
-const SCREEN_KEY = "binance-crypto-screen-v6";
+/** v8 — iOS 主畫面 PWA 安全返回；不依賴 history.back()，恢復掃描結果與列表位置。 */
+const SCREEN_KEY = "binance-crypto-screen-v8";
+const PREVIOUS_SCREEN_KEY = "binance-crypto-screen-v6";
 const LEGACY_SCREEN_KEY = "binance-crypto-screen-v5";
 const FIELDS = ["interval", "topN", "minVol", "minAmp", "showN", "fx", "fee", "useFutures"];
 let lastListY = 0;
@@ -8,7 +9,6 @@ let viewName = "list";
 let touchStart = null;
 let pendingScrollRestore = false;
 let restoreTicket = 0;
-let backGuardTimer = null;
 let scrollSaveTimer = null;
 
 function currentCoin() {
@@ -40,7 +40,8 @@ function persistScreenState() {
     }
     const stats = {};
     for (const id of ["status", "sumCandidates", "sumAnalyzed", "sumTop", "sumAmp", "sumTime"]) stats[id] = $(id).textContent;
-    const packed = JSON.stringify({ rows, sortState, fields, stats, lastListY, lastTableX, savedAt: Date.now() });
+    const packed = JSON.stringify({ rows, sortState, fields, stats, lastListY, lastTableX,
+      view: viewName, selectedSymbol: viewName === "coin" ? selectedSymbol : null, savedAt: Date.now() });
     try { sessionStorage.setItem(SCREEN_KEY, packed); } catch (_) {}
     // 第二份備援：iOS Safari 分頁遭回收或重啟時，盡量找回最後一次掃描。
     try { localStorage.setItem(SCREEN_KEY, packed); } catch (_) {}
@@ -48,11 +49,20 @@ function persistScreenState() {
 }
 function restoreScreenState() {
   try {
-    let raw = null;
-    try { raw = sessionStorage.getItem(SCREEN_KEY) || sessionStorage.getItem(LEGACY_SCREEN_KEY); } catch (_) {}
-    if (!raw) { try { raw = localStorage.getItem(SCREEN_KEY); } catch (_) {} }
-    const saved = JSON.parse(raw || "null");
-    if (!saved || !Array.isArray(saved.rows)) return;
+    // iPhone PWA 可能回收分頁，sessionStorage 和 localStorage 也可能不同步。
+    // 取最新的「有效排行榜」備份，舊版 v6/v5 仍能升級沿用。
+    const candidates = [];
+    for (const store of [sessionStorage, localStorage]) {
+      for (const key of [SCREEN_KEY, PREVIOUS_SCREEN_KEY, LEGACY_SCREEN_KEY]) {
+        try {
+          const value = JSON.parse(store.getItem(key) || "null");
+          if (value && Array.isArray(value.rows) && value.rows.length)
+            candidates.push(value);
+        } catch (_) {}
+      }
+    }
+    const saved = candidates.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
+    if (!saved) return;
     rows = saved.rows;
     if (saved.sortState && typeof saved.sortState.key === "string") sortState = saved.sortState;
     for (const id of FIELDS) {
@@ -90,7 +100,7 @@ function showListView(y) {
   viewName = "list";
   $("coinView").hidden = true;
   $("listView").hidden = false;
-  document.title = "Binance 短線選幣器 v7";
+  document.title = "Binance 短線選幣器 v8";
   // 即使瀏覽器意外重建了 JS 執行環境，也優先恢復最近一次結果。
   if (!rows.length) restoreScreenState();
   if (rows.length && !document.querySelector("#resultTable tbody").children.length) render();
@@ -124,28 +134,19 @@ function navigateToCoin(symbol) {
   }
   history.pushState({ view: "coin", symbol, listY: lastListY, fromList: true }, "", coinUrl(symbol));
   showCoinView(symbol);
+  persistScreenState();
 }
 function backToRanking() {
-  if (viewName !== "coin") return;
+  // iOS 加入主畫面的 PWA 切換至 Binance App 後，瀏覽器 History 可能被重建。
+  // 不能依賴 history.back()，否則可能回到空白頁甚至離開選幣器。
   const y = lastListY;
-  // 先同步恢復畫面，杜絕 history.back() 尚未完成時留下空白頁。
+  try {
+    history.replaceState({ view: "list", scrollY: y, tableX: lastTableX }, "", listUrl());
+  } catch (e) { console.warn("無法更新返回網址，仍會恢復排行榜", e); }
   showListView(y);
-  const before = location.href;
-  if (history.state?.view === "coin" && history.state?.fromList) {
-    history.back();
-    // 部分 iOS WebView 不會回傳 popstate；保底修正網址。
-    clearTimeout(backGuardTimer);
-    backGuardTimer = setTimeout(() => {
-      if (location.href === before && viewName === "list")
-        history.replaceState({view: "list", scrollY: y, tableX: lastTableX}, "", listUrl());
-    }, 650);
-  } else {
-    history.replaceState({view: "list", scrollY: y, tableX: lastTableX}, "", listUrl());
-  }
   persistScreenState();
 }
 function onLocationChange(event) {
-  clearTimeout(backGuardTimer);
   const symbol = currentCoin();
   if (symbol) {
     showCoinView(symbol);
@@ -190,14 +191,22 @@ function initNavigation() {
   $("coinView").addEventListener("touchend", handleTouchEnd, {passive:true});
   $("coinView").addEventListener("touchcancel", () => { touchStart = null; }, {passive:true});
   window.addEventListener("pagehide", () => {readListPosition();persistScreenState();});
-  window.addEventListener("pageshow", (e) => {
-    // 針對 Safari 返回快取（BFCache）的還原。
-    if (e.persisted) {
-      if (!rows.length) restoreScreenState();
-      const symbol = currentCoin();
-      if (symbol) showCoinView(symbol);
-      else showListView(lastListY);
+  // 從外部 App 回到主畫面 PWA，頁面可能恢復 BFCache 或被重新建構。
+  // 若原來還在幣種詳情，保留其捲動位置；不要無條件重新開詳情。
+  const resume = () => {
+    if (!rows.length) restoreScreenState();
+    const symbol = currentCoin();
+    if (symbol) {
+      if (viewName !== "coin" || selectedSymbol !== symbol || $("coinView").hidden)
+        showCoinView(symbol);
+    } else if (viewName !== "list" || $("listView").hidden) {
+      showListView(lastListY);
     }
+  };
+  window.addEventListener("pageshow", resume);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") persistScreenState();
+    else resume();
   });
   window.addEventListener("scroll", () => {
     if (viewName === "list" && !pendingScrollRestore) {
