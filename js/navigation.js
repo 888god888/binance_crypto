@@ -90,7 +90,7 @@ function showListView(y) {
   viewName = "list";
   $("coinView").hidden = true;
   $("listView").hidden = false;
-  document.title = "Binance 短線選幣器 v6";
+  document.title = "Binance 短線選幣器 v7";
   // 即使瀏覽器意外重建了 JS 執行環境，也優先恢復最近一次結果。
   if (!rows.length) restoreScreenState();
   if (rows.length && !document.querySelector("#resultTable tbody").children.length) render();
