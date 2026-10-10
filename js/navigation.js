@@ -1,11 +1,15 @@
 /** v5 — 獨立幣種頁：History API 導航、返回及保留捲動位置。 */
-const SCREEN_KEY = "binance-crypto-screen-v5";
+const SCREEN_KEY = "binance-crypto-screen-v6";
+const LEGACY_SCREEN_KEY = "binance-crypto-screen-v5";
 const FIELDS = ["interval", "topN", "minVol", "minAmp", "showN", "fx", "fee", "useFutures"];
 let lastListY = 0;
 let lastTableX = 0;
 let viewName = "list";
 let touchStart = null;
 let pendingScrollRestore = false;
+let restoreTicket = 0;
+let backGuardTimer = null;
+let scrollSaveTimer = null;
 
 function currentCoin() {
   const raw = new URLSearchParams(location.search).get("coin");
@@ -36,12 +40,18 @@ function persistScreenState() {
     }
     const stats = {};
     for (const id of ["status", "sumCandidates", "sumAnalyzed", "sumTop", "sumAmp", "sumTime"]) stats[id] = $(id).textContent;
-    sessionStorage.setItem(SCREEN_KEY, JSON.stringify({ rows, sortState, fields, stats, lastListY, lastTableX, savedAt: Date.now() }));
+    const packed = JSON.stringify({ rows, sortState, fields, stats, lastListY, lastTableX, savedAt: Date.now() });
+    try { sessionStorage.setItem(SCREEN_KEY, packed); } catch (_) {}
+    // 第二份備援：iOS Safari 分頁遭回收或重啟時，盡量找回最後一次掃描。
+    try { localStorage.setItem(SCREEN_KEY, packed); } catch (_) {}
   } catch (e) { /* 瀏覽器不允許儲存時，仍以記憶體維持當前分頁狀態 */ }
 }
 function restoreScreenState() {
   try {
-    const saved = JSON.parse(sessionStorage.getItem(SCREEN_KEY) || "null");
+    let raw = null;
+    try { raw = sessionStorage.getItem(SCREEN_KEY) || sessionStorage.getItem(LEGACY_SCREEN_KEY); } catch (_) {}
+    if (!raw) { try { raw = localStorage.getItem(SCREEN_KEY); } catch (_) {} }
+    const saved = JSON.parse(raw || "null");
     if (!saved || !Array.isArray(saved.rows)) return;
     rows = saved.rows;
     if (saved.sortState && typeof saved.sortState.key === "string") sortState = saved.sortState;
@@ -60,24 +70,35 @@ function restoreScreenState() {
   } catch (e) { /* 舊資料/儲存被清除時可重新掃描 */ }
 }
 function restoreListScroll(y = lastListY) {
-  // 兩個繪製影格後再捲回，避免手機瀏覽器在隱藏頁面切換時回到頂部。
+  const ticket = ++restoreTicket;
   const targetY = Math.max(0, Number(y) || 0);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  // 列表先顯示，再等待完成 layout；Safari 有時會延遲計算捲動高度。
+  const attempt = (tries = 0) => {
+    if (ticket !== restoreTicket || viewName !== "list") return;
     const table = document.querySelector("#listView .tableWrap");
     if (table) table.scrollLeft = lastTableX;
-    window.scrollTo(0, targetY);
-    pendingScrollRestore = false;
-  }));
+    window.scrollTo(0, Math.min(targetY, Math.max(0, document.documentElement.scrollHeight - innerHeight)));
+    if (tries < 5 && targetY > 0 && Math.abs(window.scrollY - targetY) > 5) {
+      setTimeout(() => attempt(tries + 1), 70);
+    } else {
+      pendingScrollRestore = false;
+    }
+  };
+  requestAnimationFrame(() => requestAnimationFrame(() => attempt()));
 }
 function showListView(y) {
   viewName = "list";
   $("coinView").hidden = true;
   $("listView").hidden = false;
-  document.title = "Binance 短線選幣器 v5";
+  document.title = "Binance 短線選幣器 v6";
+  // 即使瀏覽器意外重建了 JS 執行環境，也優先恢復最近一次結果。
+  if (!rows.length) restoreScreenState();
+  if (rows.length && !document.querySelector("#resultTable tbody").children.length) render();
   pendingScrollRestore = true;
   restoreListScroll(y);
 }
 function showCoinView(symbol) {
+  ++restoreTicket;
   viewName = "coin";
   $("listView").hidden = true;
   $("coinView").hidden = false;
@@ -106,21 +127,34 @@ function navigateToCoin(symbol) {
 }
 function backToRanking() {
   if (viewName !== "coin") return;
+  const y = lastListY;
+  // 先同步恢復畫面，杜絕 history.back() 尚未完成時留下空白頁。
+  showListView(y);
+  const before = location.href;
   if (history.state?.view === "coin" && history.state?.fromList) {
-    history.back(); // popstate 統一負責還原原位置
+    history.back();
+    // 部分 iOS WebView 不會回傳 popstate；保底修正網址。
+    clearTimeout(backGuardTimer);
+    backGuardTimer = setTimeout(() => {
+      if (location.href === before && viewName === "list")
+        history.replaceState({view: "list", scrollY: y, tableX: lastTableX}, "", listUrl());
+    }, 650);
   } else {
-    history.replaceState({view: "list", scrollY: lastListY, tableX: lastTableX}, "", listUrl());
-    showListView(lastListY);
+    history.replaceState({view: "list", scrollY: y, tableX: lastTableX}, "", listUrl());
   }
+  persistScreenState();
 }
 function onLocationChange(event) {
+  clearTimeout(backGuardTimer);
   const symbol = currentCoin();
   if (symbol) {
     showCoinView(symbol);
   } else {
+    // 不能把 0 誤當缺失：返回時以歷史快照為主。
     const y = Number.isFinite(event.state?.scrollY) ? event.state.scrollY : lastListY;
     if (Number.isFinite(event.state?.tableX)) lastTableX = event.state.tableX;
     showListView(y);
+    persistScreenState();
   }
 }
 
@@ -156,10 +190,20 @@ function initNavigation() {
   $("coinView").addEventListener("touchend", handleTouchEnd, {passive:true});
   $("coinView").addEventListener("touchcancel", () => { touchStart = null; }, {passive:true});
   window.addEventListener("pagehide", () => {readListPosition();persistScreenState();});
+  window.addEventListener("pageshow", (e) => {
+    // 針對 Safari 返回快取（BFCache）的還原。
+    if (e.persisted) {
+      if (!rows.length) restoreScreenState();
+      const symbol = currentCoin();
+      if (symbol) showCoinView(symbol);
+      else showListView(lastListY);
+    }
+  });
   window.addEventListener("scroll", () => {
     if (viewName === "list" && !pendingScrollRestore) {
       readListPosition();
-      // 不在每次捲動時寫入 sessionStorage，以避免低階手機卡頓。
+      clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = setTimeout(persistScreenState, 350);
     }
   }, {passive:true});
   document.querySelectorAll("#listView input, #listView select").forEach(el => el.addEventListener("change", persistScreenState));
