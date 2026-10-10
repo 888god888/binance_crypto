@@ -3,7 +3,7 @@
  * Vanilla JavaScript，依 index.html 的 defer 順序載入。
  */
 
-async function scan() { $("scanBtn").disabled = true; rows = []; selectedSymbol = null; $("detailContent").style.display = "none"; $("emptyDetail").style.display = "block"; try {
+async function scan() { $("scanBtn").disabled = true; const previousRows = rows.slice(); selectedSymbol = null; $("detailContent").style.display = "none"; $("emptyDetail").style.display = "block"; try {
     const interval = $("interval").value, topN = clamp(parseInt($("topN").value || 60), 10, 120), minVol = n($("minVol").value || 0) * 1e6, minAmp = n($("minAmp").value || 0), useFutures = $("useFutures").checked;
     setStatus("1/4 讀取 Binance USDT 現貨市場...");
     const [ex, tickers] = await Promise.all([fetchJSON(`${SPOT}/api/v3/exchangeInfo?permissions=SPOT&symbolStatus=TRADING`), fetchJSON(`${SPOT}/api/v3/ticker/24hr`)]);
@@ -55,7 +55,8 @@ async function scan() { $("scanBtn").disabled = true; rows = []; selectedSymbol 
 }
 catch (e) {
     console.error(e);
-    setStatus(`掃描失敗：${e.message}。若所在地網路限制 Binance 公開行情域名，需改用代理/後端。`);
+    if(!rows.length && previousRows.length) { rows = previousRows; render(); }
+    setStatus(`掃描失敗：${e.message}。已保留前一次成功的候選名單；若所在地網路限制 Binance 公開行情域名，需改用代理/後端。`);
     persistScreenState();
 }
 finally {

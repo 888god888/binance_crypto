@@ -1,28 +1,24 @@
-# Binance 短線選幣器 v8 — iPhone PWA App 切換與返回修正
+# Binance 短線選幣器 v9 — iPhone 返回功能重新實作
 
-## 為何要修正
+## 這次修正的原因
 
-v7 的 `bnc://app.binance.com/markets/markets` 是行情頁入口，**沒有交易對代號**，因此打開幣安 App 後不會自動選到 ZEC/USDT、ADA/USDT 等現貨交易對。Binance 沒有在這次查證中提供可確認有效的通用 iOS 現貨交易對深層連結，不能承諾一鍵直達。
+v8 同時使用 `history.pushState`、`history.replaceState`、`popstate` 和分頁儲存控制畫面；iPhone 加入主畫面後可能存在不同的瀏覽器返回行為。v9 停止用 History API 導航幣種：**排行榜和詳細分析同一網頁切換**，點「← 返回候選排名」或從左向右滑動直接顯示排行榜，不需要依賴 `history.back()` 或 URL 是否有 `?coin=`。
 
-v7 的返回邏輯使用 `history.back()`。在 iPhone「加入主畫面」網頁切換到其他 App 後，瀏覽器 history 可能被回收或重建，容易造成返回無效、空白。
+> 注意：沒有更動幣安 App 連結的限制；仍然只能嘗試啟動 Binance App，尚不能確認 iOS 會直達指定交易對。
 
-## v8 修改
+## v9 功能
 
-1. **返回排行榜不再呼叫 `history.back()`**：直接切換列表畫面並用 `history.replaceState()` 移除 `?coin=`，即使歷史狀態遺失仍可恢復列表。獨立幣種頁的返回按鈕及從左往右滑都走同一條路徑。
-2. **保留捲動位置、排序及掃描結果**：在 `sessionStorage` 和 `localStorage` 兩邊儲存。啟動時挑選最近有效的備份，也可讀取 v6/v5 舊備份。
-3. **從 Binance App 回來時不亂重置詳細頁**：增加 `pageshow`、`visibilitychange` 的恢復判斷，盡量保留頁面及 K 圖位置。
-4. **複製交易對再開 App**：幣種詳情頁的主要按鈕會先嘗試複製如 `ZECUSDT`，再從獨立連結 (`target="_blank"`) 開 Binance App。App 目前可能仍會落在行情頁，須在 Binance 的交易對搜尋框貼上該代號。旁邊保留「複製交易對」與官方現貨網頁入口；不會自動下單。
+- 返回按鈕和詳細頁右滑共用同一條直接返回邏輯。
+- 返回後保留掃描結果、排序、篩選條件、列表縱向捲動及表格橫向位置。
+- 掃描結果仍在 `sessionStorage` + `localStorage` 保留；iPhone 因記憶體回收重啟網頁時會嘗試恢復剛才的頁面和列表。
+- 舊 v8/v6/v5 快取可讀；若重新掃描失敗且有上次結果，盡量不將結果清空。
+- `index.html` 對 CSS/JS 加版本查詢參數 `?v=9.0.1`，減少 GitHub Pages / Safari 將不同版本檔案混用的情形。
+- 不再在點幣種時修改 URL；**不要使用 iOS 系統級瀏覽器返回**來返回排行榜，請用畫面頂部的「← 返回候選排名」或在詳細頁由左向右滑。
 
-> iOS 外部 App URL 的開啟行為與剪貼簿權限受裝置版本影響，無法在桌面模擬測試中完全證實。若主要 App 按鈕未順利複製，請先點獨立的「複製交易對」，再開幣安 App。
+## 部署
 
-## 更新 GitHub Pages
+將 ZIP 內容完整覆蓋到 GitHub Pages 存放庫 `888god888/binance_crypto` 的根目錄（包含 css、js、config）。確認主畫面的版本號顯示 **v9**。如果依然看到 v8，代表 iPhone 尚在使用舊版網頁快取，可先從 Safari 開啟最新版網址確認，必要時移除舊的主畫面圖示再新增。
 
-將 ZIP 解壓縮，把 `index.html`、`css/`、`config/`、`js/` 完整覆蓋到 `888god888/binance_crypto` 儲存庫根目錄。需一併更新 `js/navigation.js`、`js/app_links.js`、`js/detail.js`，且版本標記為 v8。暫存舊版時可在 Safari 重新載入選幣器。
+## 驗證
 
-## 建議實機測試
-
-1. iPhone 主畫面開啟選幣器，掃描並滑到排行榜中段。
-2. 點 ZEC →「複製交易對並開 App」，確認 Binance 能開啟（即使沒有自動選中 ZEC/USDT）。
-3. 返回選幣器 → 點「← 返回候選排名」，應該能回到原本位置且保留排名。
-4. 再選其他幣，重複上述操作，並試從左往右滑。
-5. 在幣種頁切回主畫面並重開選幣器，檢查是否仍能返回排行榜。
+本專案包含離線 Playwright 模擬測試，模擬排行榜、詳細頁、右滑、無 History、從外部 App 返回、重整後恢復。桌面模擬無法取代實際 iPhone Safari 主畫面測試。

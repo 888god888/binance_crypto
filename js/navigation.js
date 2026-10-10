@@ -1,221 +1,185 @@
-/** v8 — iOS 主畫面 PWA 安全返回；不依賴 history.back()，恢復掃描結果與列表位置。 */
-const SCREEN_KEY = "binance-crypto-screen-v8";
-const PREVIOUS_SCREEN_KEY = "binance-crypto-screen-v6";
-const LEGACY_SCREEN_KEY = "binance-crypto-screen-v5";
-const FIELDS = ["interval", "topN", "minVol", "minAmp", "showN", "fx", "fee", "useFutures"];
+/** v9 — iPhone PWA：單文件雙畫面。返回不呼叫或依賴瀏覽器 History。 */
+const SCREEN_KEY = 'binance-crypto-screen-v9';
+const OLD_SCREEN_KEYS = ['binance-crypto-screen-v8','binance-crypto-screen-v6','binance-crypto-screen-v5'];
+const FIELDS = ['interval','topN','minVol','minAmp','showN','fx','fee','useFutures'];
 let lastListY = 0;
 let lastTableX = 0;
-let viewName = "list";
+let viewName = 'list';
 let touchStart = null;
-let pendingScrollRestore = false;
 let restoreTicket = 0;
+let pendingScrollRestore = false;
 let scrollSaveTimer = null;
+let initializedNavigation = false;
 
-function currentCoin() {
-  const raw = new URLSearchParams(location.search).get("coin");
-  return raw && /^[A-Z0-9]{2,30}USDT$/.test(raw) ? raw : null;
-}
-function listUrl() {
-  const u = new URL(location.href);
-  u.searchParams.delete("coin");
-  return u.href;
-}
-function coinUrl(symbol) {
-  const u = new URL(location.href);
-  u.searchParams.set("coin", symbol);
-  return u.href;
-}
+function navEl(id) { return document.getElementById(id); }
+function validSymbol(s) { return typeof s === 'string' && /^[A-Z0-9]{2,30}USDT$/.test(s); }
 function readListPosition() {
-  if (viewName !== "list") return;
-  lastListY = Math.max(0, window.scrollY);
-  const table = document.querySelector("#listView .tableWrap");
-  lastTableX = table ? table.scrollLeft : 0;
+  if(viewName !== 'list' || pendingScrollRestore) return;
+  lastListY = Math.max(0, window.scrollY || 0);
+  const table = document.querySelector('#listView .tableWrap');
+  if(table) lastTableX = Math.max(0, table.scrollLeft || 0);
+}
+function getSnapshot() {
+  const fields = {}, stats = {};
+  for(const id of FIELDS) {
+    const el = navEl(id); if(!el) continue;
+    fields[id] = el.type === 'checkbox' ? el.checked : el.value;
+  }
+  for(const id of ['status','sumCandidates','sumAnalyzed','sumTop','sumAmp','sumTime']) {
+    const el = navEl(id); if(el) stats[id] = el.textContent;
+  }
+  return { rows, sortState, fields, stats, lastListY, lastTableX, view:viewName,
+    selectedSymbol:viewName==='coin'?selectedSymbol:null, savedAt:Date.now() };
 }
 function persistScreenState() {
   try {
-    const fields = {};
-    for (const id of FIELDS) {
-      const el = $(id);
-      fields[id] = el.type === "checkbox" ? el.checked : el.value;
+    const snapshot = getSnapshot();
+    // Never overwrite the last good screener cache with an accidental empty result.
+    if (!Array.isArray(snapshot.rows) || snapshot.rows.length === 0) return;
+    const packed = JSON.stringify(snapshot);
+    try {sessionStorage.setItem(SCREEN_KEY, packed);} catch(_) {}
+    try {localStorage.setItem(SCREEN_KEY, packed);} catch(_) {}
+  } catch(e) { console.warn('暫存掃描結果失敗',e); }
+}
+function loadLatestSnapshot() {
+  const found=[];
+  for(const store of [sessionStorage,localStorage]) {
+    for(const key of [SCREEN_KEY,...OLD_SCREEN_KEYS]) {
+      try {
+        const item=JSON.parse(store.getItem(key) || 'null');
+        if (item && Array.isArray(item.rows) && item.rows.length && item.rows.every(r=>r&&validSymbol(r.symbol))) found.push(item);
+      } catch(_) {}
     }
-    const stats = {};
-    for (const id of ["status", "sumCandidates", "sumAnalyzed", "sumTop", "sumAmp", "sumTime"]) stats[id] = $(id).textContent;
-    const packed = JSON.stringify({ rows, sortState, fields, stats, lastListY, lastTableX,
-      view: viewName, selectedSymbol: viewName === "coin" ? selectedSymbol : null, savedAt: Date.now() });
-    try { sessionStorage.setItem(SCREEN_KEY, packed); } catch (_) {}
-    // 第二份備援：iOS Safari 分頁遭回收或重啟時，盡量找回最後一次掃描。
-    try { localStorage.setItem(SCREEN_KEY, packed); } catch (_) {}
-  } catch (e) { /* 瀏覽器不允許儲存時，仍以記憶體維持當前分頁狀態 */ }
+  }
+  found.sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+  return found[0] || null;
 }
 function restoreScreenState() {
+  const saved=loadLatestSnapshot();
+  if(!saved) return null;
+  // Keep usable in-memory rows if cache is temporarily unavailable.
+  if (!rows.length) rows=saved.rows;
+  if(saved.sortState && typeof saved.sortState.key==='string' && (saved.sortState.dir===1 || saved.sortState.dir===-1))
+    sortState=saved.sortState;
+  for(const id of FIELDS) {
+    const el=navEl(id); if(!el||!saved.fields||!(id in saved.fields)) continue;
+    if(el.type==='checkbox') el.checked=!!saved.fields[id]; else el.value=saved.fields[id];
+  }
+  for(const [id,value] of Object.entries(saved.stats||{})) {
+    const el=navEl(id); if(el) el.textContent=value;
+  }
+  lastListY=Number(saved.lastListY)||0;
+  lastTableX=Number(saved.lastTableX)||0;
+  try {if(rows.length) render();} catch(e) {console.warn('無法重繪之前的排名',e);}
+  return saved;
+}
+function restoreListScroll(y=lastListY) {
+  const ticket=++restoreTicket, goal=Math.max(0,Number(y)||0);
+  pendingScrollRestore=true;
+  function run(tries=0) {
+    if (ticket!==restoreTicket || viewName!=='list') return;
+    const t=document.querySelector('#listView .tableWrap'); if(t) t.scrollLeft=lastTableX;
+    const maxY=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
+    window.scrollTo(0,Math.min(maxY,goal));
+    if(tries<8 && goal>0 && Math.abs(window.scrollY-Math.min(goal,maxY))>5) setTimeout(()=>run(tries+1),80);
+    else pendingScrollRestore=false;
+  }
+  requestAnimationFrame(()=>requestAnimationFrame(()=>run()));
+}
+function showListView(y=lastListY) {
+  // Change visibility FIRST, regardless of whether storage, chart or History works.
+  viewName='list';
+  if(navEl('coinView')) navEl('coinView').hidden=true;
+  if(navEl('listView')) navEl('listView').hidden=false;
+  document.title='Binance 短線選幣器 v9';
   try {
-    // iPhone PWA 可能回收分頁，sessionStorage 和 localStorage 也可能不同步。
-    // 取最新的「有效排行榜」備份，舊版 v6/v5 仍能升級沿用。
-    const candidates = [];
-    for (const store of [sessionStorage, localStorage]) {
-      for (const key of [SCREEN_KEY, PREVIOUS_SCREEN_KEY, LEGACY_SCREEN_KEY]) {
-        try {
-          const value = JSON.parse(store.getItem(key) || "null");
-          if (value && Array.isArray(value.rows) && value.rows.length)
-            candidates.push(value);
-        } catch (_) {}
-      }
-    }
-    const saved = candidates.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))[0];
-    if (!saved) return;
-    rows = saved.rows;
-    if (saved.sortState && typeof saved.sortState.key === "string") sortState = saved.sortState;
-    for (const id of FIELDS) {
-      if (!saved.fields || !(id in saved.fields)) continue;
-      const el = $(id);
-      if (el.type === "checkbox") el.checked = !!saved.fields[id];
-      else el.value = saved.fields[id];
-    }
-    for (const [id, value] of Object.entries(saved.stats || {})) {
-      if ($(id)) $(id).textContent = value;
-    }
-    lastListY = Number(saved.lastListY) || 0;
-    lastTableX = Number(saved.lastTableX) || 0;
-    render();
-  } catch (e) { /* 舊資料/儲存被清除時可重新掃描 */ }
-}
-function restoreListScroll(y = lastListY) {
-  const ticket = ++restoreTicket;
-  const targetY = Math.max(0, Number(y) || 0);
-  // 列表先顯示，再等待完成 layout；Safari 有時會延遲計算捲動高度。
-  const attempt = (tries = 0) => {
-    if (ticket !== restoreTicket || viewName !== "list") return;
-    const table = document.querySelector("#listView .tableWrap");
-    if (table) table.scrollLeft = lastTableX;
-    window.scrollTo(0, Math.min(targetY, Math.max(0, document.documentElement.scrollHeight - innerHeight)));
-    if (tries < 5 && targetY > 0 && Math.abs(window.scrollY - targetY) > 5) {
-      setTimeout(() => attempt(tries + 1), 70);
-    } else {
-      pendingScrollRestore = false;
-    }
-  };
-  requestAnimationFrame(() => requestAnimationFrame(() => attempt()));
-}
-function showListView(y) {
-  viewName = "list";
-  $("coinView").hidden = true;
-  $("listView").hidden = false;
-  document.title = "Binance 短線選幣器 v8";
-  // 即使瀏覽器意外重建了 JS 執行環境，也優先恢復最近一次結果。
-  if (!rows.length) restoreScreenState();
-  if (rows.length && !document.querySelector("#resultTable tbody").children.length) render();
-  pendingScrollRestore = true;
+    if(!rows.length) restoreScreenState();
+    if(rows.length && !document.querySelector('#resultTable tbody').children.length) render();
+  } catch(e) {console.error('排行榜還原遇到問題',e);}
   restoreListScroll(y);
+  persistScreenState();
 }
 function showCoinView(symbol) {
+  if(!validSymbol(symbol)) return;
   ++restoreTicket;
-  viewName = "coin";
-  $("listView").hidden = true;
-  $("coinView").hidden = false;
-  $("detailNavTitle").textContent = symbol.replace(/USDT$/, "/USDT");
-  document.title = `${symbol.replace(/USDT$/, "/USDT")}｜Binance 短線選幣器`;
-  if (rows.some(r => r.symbol === symbol)) {
-    showDetail(symbol);
+  pendingScrollRestore=false;
+  viewName='coin';
+  navEl('listView').hidden=true;
+  navEl('coinView').hidden=false;
+  navEl('detailNavTitle').textContent=symbol.replace(/USDT$/,'/USDT');
+  document.title=symbol.replace(/USDT$/,'/USDT')+'｜Binance 短線選幣器';
+  if(rows.some(r=>r.symbol===symbol)) {
+    try {showDetail(symbol);} catch(e) {
+      console.error('幣種詳細頁載入錯誤',e);
+      navEl('detailContent').style.display='none';
+      navEl('emptyDetail').style.display='block';
+      navEl('emptyDetail').textContent='幣種詳細資料載入失敗，請返回排行榜再試。';
+    }
   } else {
-    selectedSymbol = symbol;
-    $("detailContent").style.display = "none";
-    $("emptyDetail").style.display = "block";
-    $("emptyDetail").textContent = "目前沒有這個幣的掃描資料。請返回排行榜按「開始掃描」，再點選幣種查看。";
+    selectedSymbol=symbol;
+    navEl('detailContent').style.display='none';
+    navEl('emptyDetail').style.display='block';
+    navEl('emptyDetail').textContent='本機沒有此幣種的掃描資料，請返回排行榜重新掃描。';
   }
-  window.scrollTo(0, 0);
+  window.scrollTo(0,0);
+  persistScreenState();
 }
 function navigateToCoin(symbol) {
-  if (!rows.some(r => r.symbol === symbol)) return;
-  if (viewName === "list") {
-    readListPosition();
-    const state = { ...(history.state || {}), view: "list", scrollY: lastListY, tableX: lastTableX };
-    history.replaceState(state, "", listUrl());
-    persistScreenState();
-  }
-  history.pushState({ view: "coin", symbol, listY: lastListY, fromList: true }, "", coinUrl(symbol));
+  if(!validSymbol(symbol)||!rows.some(r=>r.symbol===symbol)) return;
+  if(viewName==='list') {readListPosition();persistScreenState();}
+  // Do not push URL/history here: iOS Home Screen PWA may change/recreate the context.
   showCoinView(symbol);
-  persistScreenState();
 }
 function backToRanking() {
-  // iOS 加入主畫面的 PWA 切換至 Binance App 後，瀏覽器 History 可能被重建。
-  // 不能依賴 history.back()，否則可能回到空白頁甚至離開選幣器。
-  const y = lastListY;
-  try {
-    history.replaceState({ view: "list", scrollY: y, tableX: lastTableX }, "", listUrl());
-  } catch (e) { console.warn("無法更新返回網址，仍會恢復排行榜", e); }
-  showListView(y);
-  persistScreenState();
+  // This works even if iOS lost window.history, navigated from Binance, or reloads the PWA.
+  if (viewName==='list' && !navEl('listView').hidden) return;
+  showListView(lastListY);
 }
-function onLocationChange(event) {
-  const symbol = currentCoin();
-  if (symbol) {
-    showCoinView(symbol);
-  } else {
-    // 不能把 0 誤當缺失：返回時以歷史快照為主。
-    const y = Number.isFinite(event.state?.scrollY) ? event.state.scrollY : lastListY;
-    if (Number.isFinite(event.state?.tableX)) lastTableX = event.state.tableX;
-    showListView(y);
-    persistScreenState();
-  }
-}
-
-// 僅在幣種頁識別手指向右滑，避免排行榜水平捲動造成誤觸。
 function handleTouchStart(e) {
-  if (viewName !== "coin" || e.touches.length !== 1) return;
-  const t = e.touches[0];
-  touchStart = { x: t.clientX, y: t.clientY };
+  if(viewName!=='coin'||e.touches.length!==1) return;
+  const t=e.touches[0]; touchStart={x:t.clientX,y:t.clientY};
 }
 function handleTouchEnd(e) {
-  if (viewName !== "coin" || !touchStart || !e.changedTouches.length) return;
-  const t = e.changedTouches[0];
-  const dx = t.clientX - touchStart.x;
-  const dy = t.clientY - touchStart.y;
-  touchStart = null;
-  if (dx > 95 && Math.abs(dy) < Math.abs(dx) * 0.55) backToRanking();
+  if(viewName!=='coin'||!touchStart||!e.changedTouches.length) return;
+  const t=e.changedTouches[0], dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
+  touchStart=null;
+  if(dx>95 && Math.abs(dy)<Math.abs(dx)*0.55) backToRanking();
 }
-
 function initNavigation() {
-  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
-  restoreScreenState();
-  const symbol = currentCoin();
-  if (symbol) {
-    history.replaceState({ ...(history.state || {}), view: "coin", symbol }, "", location.href);
-    showCoinView(symbol);
-  } else {
-    history.replaceState({ ...(history.state || {}), view: "list", scrollY: lastListY, tableX: lastTableX }, "", location.href);
-    showListView(lastListY);
-  }
-  $("backToList").addEventListener("click", backToRanking);
-  window.addEventListener("popstate", onLocationChange);
-  $("coinView").addEventListener("touchstart", handleTouchStart, {passive:true});
-  $("coinView").addEventListener("touchend", handleTouchEnd, {passive:true});
-  $("coinView").addEventListener("touchcancel", () => { touchStart = null; }, {passive:true});
-  window.addEventListener("pagehide", () => {readListPosition();persistScreenState();});
-  // 從外部 App 回到主畫面 PWA，頁面可能恢復 BFCache 或被重新建構。
-  // 若原來還在幣種詳情，保留其捲動位置；不要無條件重新開詳情。
-  const resume = () => {
-    if (!rows.length) restoreScreenState();
-    const symbol = currentCoin();
-    if (symbol) {
-      if (viewName !== "coin" || selectedSymbol !== symbol || $("coinView").hidden)
-        showCoinView(symbol);
-    } else if (viewName !== "list" || $("listView").hidden) {
-      showListView(lastListY);
+  if(initializedNavigation) return;
+  initializedNavigation=true;
+  // Attach return listeners before attempting any saved-state restoration.
+  navEl('backToList').addEventListener('click',backToRanking);
+  const coin=navEl('coinView');
+  coin.addEventListener('touchstart',handleTouchStart,{passive:true});
+  coin.addEventListener('touchend',handleTouchEnd,{passive:true});
+  coin.addEventListener('touchcancel',()=>{touchStart=null;},{passive:true});
+  let saved=null;
+  try {saved=restoreScreenState();} catch(e) {console.warn('儲存資料還原失敗',e);}
+  // Remove OLD ?coin= link once at boot. No History access on tap/back thereafter.
+  try {
+    if(new URL(location.href).searchParams.has('coin')) {
+      const u=new URL(location.href);u.searchParams.delete('coin');
+      history.replaceState(null,'',u.href);
     }
-  };
-  window.addEventListener("pageshow", resume);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") persistScreenState();
-    else resume();
+  } catch(_) {}
+  if(saved?.view==='coin' && validSymbol(saved.selectedSymbol) && rows.some(r=>r.symbol===saved.selectedSymbol)) {
+    showCoinView(saved.selectedSymbol);
+  } else showListView(lastListY);
+  // The browser's native history back event can only mean returning to the ranking.
+  window.addEventListener('popstate',()=>{showListView(lastListY);});
+  window.addEventListener('pagehide',persistScreenState);
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='hidden') persistScreenState();
+    // On resume do not navigate or alter URLs: keep the existing view intact.
   });
-  window.addEventListener("scroll", () => {
-    if (viewName === "list" && !pendingScrollRestore) {
-      readListPosition();
-      clearTimeout(scrollSaveTimer);
-      scrollSaveTimer = setTimeout(persistScreenState, 350);
-    }
-  }, {passive:true});
-  document.querySelectorAll("#listView input, #listView select").forEach(el => el.addEventListener("change", persistScreenState));
+  window.addEventListener('scroll',()=>{
+    if(viewName!=='list'||pendingScrollRestore) return;
+    readListPosition();clearTimeout(scrollSaveTimer);
+    scrollSaveTimer=setTimeout(persistScreenState,350);
+  },{passive:true});
+  document.querySelectorAll('#listView input,#listView select').forEach(el=>el.addEventListener('change',persistScreenState));
 }
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initNavigation);
-else queueMicrotask(initNavigation);
+// A click handler still works if a later restore/indicator/chart operation throws.
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initNavigation,{once:true});
+else initNavigation();
