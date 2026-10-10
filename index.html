@@ -1,266 +1,258 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="zh-Hant">
- <head>
-  <meta charset="utf-8"/>
-  <meta content="width=device-width,initial-scale=1" name="viewport"/>
-  <title>
-   Binance 短線選幣器 v3
-  </title>
-  <link href="./css/style.css" rel="stylesheet"/>
- </head>
- <body>
-  <div class="wrap">
-   <h1>
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>Binance 短線選幣器 v5</title>
+<link href="./css/style.css" rel="stylesheet"/>
+</head>
+<body>
+<main class="wrap" id="listView">
+<h1>
     Binance 短線選幣器
-    <span class="version">
-     v3
-    </span>
-   </h1>
-   <div class="sub">
-    從 Binance USDT 現貨市場，自動找出成交量夠、波動夠、正在放量、趨勢清楚、接近突破的標的。點任一幣種可看「為什麼入選、參考進場區、停損/目標與 1萬/3萬台幣損益試算」。不需要 API Key、不讀帳戶、不自動下單。
-   </div>
-   <div class="panel">
-    <div class="controls">
-     <div>
-      <label>
+    <span class="version">v5</span>
+</h1>
+<div class="sub">從 Binance USDT 現貨市場篩選值得觀察的幣種。點擊候選排名，會開啟獨立的幣種分析頁；使用返回按鈕、瀏覽器上一頁或手機向右滑，即可回到原本的排行榜位置。不需要 API Key、不自動下單。</div>
+<div class="panel">
+<div class="controls">
+<div>
+<label>
        分析週期
       </label>
-      <select id="interval">
-       <option value="5m">
+<select id="interval">
+<option value="5m">
         5 分鐘
        </option>
-       <option selected="" value="15m">
+<option selected="" value="15m">
         15 分鐘
        </option>
-       <option value="30m">
+<option value="30m">
         30 分鐘
        </option>
-       <option value="1h">
+<option value="1h">
         1 小時
        </option>
-       <option value="4h">
+<option value="4h">
         4 小時
        </option>
-      </select>
-     </div>
-     <div>
-      <label>
+</select>
+</div>
+<div>
+<label>
        先分析成交量前幾名
       </label>
-      <input id="topN" max="120" min="10" type="number" value="60"/>
-     </div>
-     <div>
-      <label>
+<input id="topN" max="120" min="10" type="number" value="60"/>
+</div>
+<div>
+<label>
        最低 24h 成交額（百萬 USDT）
       </label>
-      <input id="minVol" min="0" step="1" type="number" value="10"/>
-     </div>
-     <div>
-      <label>
+<input id="minVol" min="0" step="1" type="number" value="10"/>
+</div>
+<div>
+<label>
        最低 24h 振幅 (%)
       </label>
-      <input id="minAmp" min="0" step="0.5" type="number" value="3"/>
-     </div>
-     <div>
-      <label>
+<input id="minAmp" min="0" step="0.5" type="number" value="3"/>
+</div>
+<div>
+<label>
        顯示前幾名
       </label>
-      <input id="showN" max="100" min="5" type="number" value="30"/>
-     </div>
-     <div>
-      <label>
+<input id="showN" max="100" min="5" type="number" value="30"/>
+</div>
+<div>
+<label>
        USDT/TWD 試算匯率
       </label>
-      <input id="fx" min="1" step="0.01" type="number" value="31.8"/>
-     </div>
-     <div>
-      <label>
+<input id="fx" min="1" step="0.01" type="number" value="31.8"/>
+</div>
+<div>
+<label>
        Binance 單邊費率 (%)
       </label>
-      <input id="fee" min="0" step="0.01" type="number" value="0.10"/>
-     </div>
-     <div class="toggle">
-      <input checked="" id="useFutures" type="checkbox"/>
-      <label for="useFutures" style="margin:0">
+<input id="fee" min="0" step="0.01" type="number" value="0.10"/>
+</div>
+<div class="toggle">
+<input checked="" id="useFutures" type="checkbox"/>
+<label for="useFutures" style="margin:0">
        加入 Funding / OI
       </label>
-     </div>
-     <div>
-      <button id="scanBtn">
+</div>
+<div>
+<button id="scanBtn">
        開始掃描
       </button>
-     </div>
-    </div>
-    <div class="status" id="status">
+</div>
+</div>
+<div class="status" id="status">
      尚未掃描。
     </div>
-   </div>
-   <div class="panel">
-    <div class="summary">
-     <div class="card">
-      <div class="k">
+</div>
+<div class="panel">
+<div class="summary">
+<div class="card">
+<div class="k">
        符合初篩
       </div>
-      <div class="v" id="sumCandidates">
+<div class="v" id="sumCandidates">
        -
       </div>
-     </div>
-     <div class="card">
-      <div class="k">
+</div>
+<div class="card">
+<div class="k">
        分析完成
       </div>
-      <div class="v" id="sumAnalyzed">
+<div class="v" id="sumAnalyzed">
        -
       </div>
-     </div>
-     <div class="card">
-      <div class="k">
+</div>
+<div class="card">
+<div class="k">
        最高分
       </div>
-      <div class="v" id="sumTop">
+<div class="v" id="sumTop">
        -
       </div>
-     </div>
-     <div class="card">
-      <div class="k">
+</div>
+<div class="card">
+<div class="k">
        平均振幅
       </div>
-      <div class="v" id="sumAmp">
+<div class="v" id="sumAmp">
        -
       </div>
-     </div>
-     <div class="card">
-      <div class="k">
+</div>
+<div class="card">
+<div class="k">
        最後更新
       </div>
-      <div class="v" id="sumTime" style="font-size:15px">
+<div class="v" id="sumTime" style="font-size:15px">
        -
       </div>
-     </div>
-    </div>
-    <div class="legend">
-     <span class="chip">
-      先看分數 &ge; 70
+</div>
+</div>
+<div class="legend">
+<span class="chip">
+      先看分數 ≥ 70
      </span>
-     <span class="chip">
+<span class="chip">
       放量比：上一根已收 K / 前 20 根均量
      </span>
-     <span class="chip">
+<span class="chip">
       突破距離：現價離前 20 根高點
      </span>
-     <span class="chip">
+<span class="chip">
       Funding 過熱會扣分
      </span>
-     <span class="chip">
+<span class="chip">
       OI 增加只代表槓桿部位增加
      </span>
-    </div>
-   </div>
-   <div class="panel">
-    <h2>
+</div>
+</div>
+<div class="panel">
+<h2>
      候選排名
     </h2>
-    <div class="tableWrap">
-     <table id="resultTable">
-      <thead>
-       <tr>
-        <th data-key="rank">
+<div class="tableWrap">
+<table id="resultTable">
+<thead>
+<tr>
+<th data-key="rank">
          #
         </th>
-        <th data-key="symbol">
+<th data-key="symbol">
          交易對
         </th>
-        <th data-key="score">
+<th data-key="score">
          總分
         </th>
-        <th data-key="lastPrice">
+<th data-key="lastPrice">
          價格
         </th>
-        <th data-key="change24">
+<th data-key="change24">
          24h%
         </th>
-        <th data-key="amp24">
+<th data-key="amp24">
          振幅%
         </th>
-        <th data-key="quoteVolume">
+<th data-key="quoteVolume">
          24h成交額
         </th>
-        <th data-key="volRatio">
+<th data-key="volRatio">
          放量比
         </th>
-        <th data-key="rsi">
+<th data-key="rsi">
          RSI14
         </th>
-        <th data-key="emaState">
+<th data-key="emaState">
          EMA
         </th>
-        <th data-key="breakDist">
+<th data-key="breakDist">
          距20K高點%
         </th>
-        <th data-key="funding">
+<th data-key="funding">
          Funding%
         </th>
-        <th data-key="oiChange">
+<th data-key="oiChange">
          OI 1h%
         </th>
-        <th>
+<th>
          判讀
         </th>
-       </tr>
-      </thead>
-      <tbody>
-      </tbody>
-     </table>
-    </div>
-   </div>
-   <div class="panel" id="detailPanel">
-    <div class="emptyDetail" id="emptyDetail">
-     掃描完成後，點上方任一幣種看詳細分析。
-    </div>
-    <div id="detailContent" style="display:none">
-    </div>
-   </div>
-   <div class="panel foot">
-    <b>
+</tr>
+</thead>
+<tbody>
+</tbody>
+</table>
+</div>
+</div>
+
+<div class="panel foot">
+<b>
      分數不是買進訊號。
     </b>
     它只是把數百個幣縮成幾個值得開圖研究的標的。
     <br/>
-    <b>
+<b>
      參考進場/停損：
     </b>
     使用 EMA20、ATR14、近 10 根低點與前 20 根高點組成的規則式估算，只適用於「現貨做多」的觀察，不代表未來價格一定會照目標走。
     <br/>
-    <b>
+<b>
      損益試算：
     </b>
     預設單邊交易費 0.10%，會以你填的 USDT/TWD 匯率換算成台幣；不含實際滑價、BNB 折扣、VIP 費率、稅務與出入金成本。
     <br/>
-    <b>
+<b>
      注意：
     </b>
     技術指標只使用已收盤 K 棒。Funding/OI 取不到時會顯示「-」，現貨篩選仍可使用。
    </div>
-  </div>
-  <script defer="True" src="./config/settings.js">
-  </script>
-  <script defer="True" src="./js/utils.js">
-  </script>
-  <script defer="True" src="./js/binance.js">
-  </script>
-  <script defer="True" src="./js/indicators.js">
-  </script>
-  <script defer="True" src="./js/scoring.js">
-  </script>
-  <script defer="True" src="./js/strategy.js">
-  </script>
-  <script defer="True" src="./js/detail.js">
-  </script>
-  <script defer="True" src="./js/chart.js"></script>
-  <script defer="True" src="./js/screener.js">
-  </script>
-  <script defer="True" src="./js/app.js">
-  </script>
- </body>
+</main><main class="wrap coin-view" hidden="" id="coinView"><nav aria-label="幣種頁面導覽" class="detailNav"><button aria-label="返回候選排名" class="backButton" id="backToList" type="button">← 返回候選排名</button><div class="detailNavInfo"><strong id="detailNavTitle">幣種詳細分析</strong><span>手機從左往右滑，也能返回原位置</span></div></nav><div class="panel" id="detailPanel">
+<div class="emptyDetail" id="emptyDetail">請在排行榜選擇幣種以查看詳細分析。</div>
+<div id="detailContent" style="display:none">
+</div>
+</div></main>
+<script defer="" src="./config/settings.js">
+</script>
+<script defer="" src="./js/utils.js">
+</script>
+<script defer="" src="./js/binance.js">
+</script>
+<script defer="" src="./js/indicators.js">
+</script>
+<script defer="" src="./js/scoring.js">
+</script>
+<script defer="" src="./js/strategy.js">
+</script>
+<script defer="" src="./js/detail.js">
+</script>
+<script defer="" src="./js/chart.js"></script>
+<script defer="" src="./js/screener.js">
+</script>
+<script defer="" src="./js/navigation.js"></script><script defer="" src="./js/app.js">
+</script>
+</body>
 </html>
-

@@ -3,7 +3,7 @@
  * Vanilla JavaScript，依 index.html 的 defer 順序載入。
  */
 
-async function scan() { $("scanBtn").disabled = true; rows = []; selectedSymbol = null; $("detailContent").style.display = "none"; $("emptyDetail").style.display = "block"; $("emptyDetail").textContent = "掃描中..."; try {
+async function scan() { $("scanBtn").disabled = true; rows = []; selectedSymbol = null; $("detailContent").style.display = "none"; $("emptyDetail").style.display = "block"; try {
     const interval = $("interval").value, topN = clamp(parseInt($("topN").value || 60), 10, 120), minVol = n($("minVol").value || 0) * 1e6, minAmp = n($("minAmp").value || 0), useFutures = $("useFutures").checked;
     setStatus("1/4 讀取 Binance USDT 現貨市場...");
     const [ex, tickers] = await Promise.all([fetchJSON(`${SPOT}/api/v3/exchangeInfo?permissions=SPOT&symbolStatus=TRADING`), fetchJSON(`${SPOT}/api/v3/ticker/24hr`)]);
@@ -50,17 +50,13 @@ async function scan() { $("scanBtn").disabled = true; rows = []; selectedSymbol 
     $("sumTop").textContent = rows.length ? `${rows[0].base} ${rows[0].score.toFixed(0)}` : "-";
     $("sumAmp").textContent = rows.length ? `${(rows.reduce((a, b) => a + b.amp24, 0) / rows.length).toFixed(1)}%` : "-";
     $("sumTime").textContent = new Date().toLocaleString("zh-TW", { hour12: false });
-    setStatus("完成。已自動展開最高分標的；也可以點其他列比較。");
-    if (rows.length)
-        showDetail(rows[0].symbol);
-    else {
-        $("emptyDetail").textContent = "沒有符合目前條件的幣種，試著降低最低振幅或成交額。";
-    }
+    setStatus("完成。點擊排行榜中的幣種，進入專屬分析頁；返回時會保留目前的位置與掃描結果。");
+    persistScreenState();
 }
 catch (e) {
     console.error(e);
     setStatus(`掃描失敗：${e.message}。若所在地網路限制 Binance 公開行情域名，需改用代理/後端。`);
-    $("emptyDetail").textContent = "掃描失敗，請看上方狀態訊息。";
+    persistScreenState();
 }
 finally {
     $("scanBtn").disabled = false;
